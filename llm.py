@@ -15,7 +15,9 @@ from manejo_rutas import ModeloRemoto, configurar_logging, configurar_rutas_cuda
 configurar_rutas_cuda_windows()
 
 from llama_cpp import Llama
-from pydantic import BaseModel, ValidationError
+from typing import Literal
+
+from pydantic import BaseModel, Field, ValidationError
 
 configurar_logging()
 
@@ -27,10 +29,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 class CorreccionEnglish(BaseModel):
-    transcription_check: str
-    explanation: str
-    grammar_topic: str
-    natural_response: str
+    assessment: Literal["needs_correction", "correct_but_unnatural", "correct_and_natural"]
+    corrected_text: str
+    natural_alternative: str = ""
+    explanation_es: str
+    focus: str
+    tts_text: str = Field(min_length=1, max_length=180)
 
 
 JSON_SCHEMA = CorreccionEnglish.model_json_schema()
@@ -40,30 +44,32 @@ JSON_SCHEMA = CorreccionEnglish.model_json_schema()
 # Prompt del sistema
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """Role: Expert English Language Coach.
-Philosophy: Do not let errors slide. Be direct and clear about mistakes, but remain encouraging. The user should notice the gap between what they said and native English -- but keep it brief and focused, not a full conversation.
+SYSTEM_PROMPT = """You are TRIAS, a concise and helpful English tutor for Spanish-speaking learners.
 
-Instructions:
-1. If there is an error, "explanation" must start directly with the correction (never "Maybe you could...").
-2. "natural_response" is what gets read aloud by a TTS engine. It must briefly acknowledge the correct version, then stop. No follow-up questions, no extended chat.
-3. If the input is already correct, celebrate briefly in "natural_response" and set grammar_topic to "None".
-4. Keep "natural_response" under 20 words. It is a quick spoken confirmation, not a conversation turn.
+Analyze one English sentence. Teach both correctness and naturalness without changing the learner's intended meaning or inventing context. Give one main learning point only; never give generic praise such as "Great, that was correct".
 
-JSON Fields:
-- "transcription_check": the corrected version of what the user said.
-- "explanation": starts with "It should be '[correction]'." followed by one short sentence explaining why.
-- "grammar_topic": one of [Subject-Verb Agreement, Prepositions, Verb Tenses, Word Choice, Articles, None].
-- "natural_response": short spoken acknowledgment (under 20 words), no questions.
+Choose assessment exactly as follows:
+- needs_correction: grammar, word choice, or meaning needs correction.
+- correct_but_unnatural: grammatical, but a native speaker would normally phrase it differently in a neutral everyday context.
+- correct_and_natural: grammatical and natural. Still provide one specific useful note about usage, register, or why it works.
+
+Return only a JSON object with:
+- assessment: one allowed value.
+- corrected_text: the best corrected sentence. Preserve the input exactly when it is already correct.
+- natural_alternative: a useful natural alternative, or an empty string when no alternative adds value.
+- explanation_es: one concise explanation in Spanish; quote English words when useful.
+- focus: a short English label, e.g. "Subject-verb agreement", "Natural phrasing", "Verb tense", "Correct and natural".
+- tts_text: an English sentence for pronunciation practice. Use natural_alternative when present; otherwise corrected_text. No praise, no questions, and at most 25 words.
 
 Examples:
-
 Input: "She don't like pizza"
-Output: {"transcription_check": "She doesn't like pizza", "explanation": "It should be 'She doesn't like pizza.' Third-person singular subjects need 'doesn't', not 'don't'.", "grammar_topic": "Subject-Verb Agreement", "natural_response": "Got it -- she doesn't like pizza."}
+Output: {"assessment":"needs_correction","corrected_text":"She doesn't like pizza.","natural_alternative":"","explanation_es":"Con 'she' usamos 'doesn't', no 'don't'.","focus":"Subject-verb agreement","tts_text":"She doesn't like pizza."}
 
-Input: "I went to the store yesterday and bought some milk"
-Output: {"transcription_check": "I went to the store yesterday and bought some milk", "explanation": "Nice, that's correct.", "grammar_topic": "None", "natural_response": "Great, that was correct!"}
+Input: "I want to make a party"
+Output: {"assessment":"correct_but_unnatural","corrected_text":"I want to have a party.","natural_alternative":"I want to throw a party.","explanation_es":"Para organizar o celebrar una fiesta, 'have a party' es la opción neutral y natural; 'throw a party' es más informal.","focus":"Natural phrasing","tts_text":"I want to have a party."}
 
-Strict rule: respond with ONLY the JSON object, nothing else, no markdown, no code fences.
+Input: "I went to the store yesterday and bought some milk."
+Output: {"assessment":"correct_and_natural","corrected_text":"I went to the store yesterday and bought some milk.","natural_alternative":"","explanation_es":"La oración usa pasado simple de forma natural para una acción terminada ayer.","focus":"Correct and natural","tts_text":"I went to the store yesterday and bought some milk."}
 """
 
 
@@ -108,7 +114,7 @@ def analizar_texto(texto_transcrito: str, max_reintentos: int = 2) -> Correccion
                 {"role": "user", "content": texto_transcrito},
             ],
             temperature=0.3,
-            max_tokens=250,
+            max_tokens=350,
             response_format={
                 "type": "json_object",
                 "schema": JSON_SCHEMA,
@@ -129,10 +135,12 @@ def analizar_texto(texto_transcrito: str, max_reintentos: int = 2) -> Correccion
     # en vez de tronar el pipeline completo.
     logger.error(f"No se pudo obtener JSON valido tras {max_reintentos} intentos. Ultimo error: {ultimo_error}")
     return CorreccionEnglish(
-        transcription_check=texto_transcrito,
-        explanation="No se pudo analizar la frase en este momento.",
-        grammar_topic="None",
-        natural_response="Sorry, I couldn't process that. Could you try again?",
+        assessment="needs_correction",
+        corrected_text=texto_transcrito,
+        natural_alternative="",
+        explanation_es="No se pudo analizar la frase en este momento.",
+        focus="Analysis unavailable",
+        tts_text=texto_transcrito or "Please try again.",
     )
 
 
@@ -142,4 +150,4 @@ def obtener_respuesta_tts(texto_transcrito: str) -> str:
     texto corto que TTS debe pronunciar.
     """
     resultado = analizar_texto(texto_transcrito)
-    return resultado.natural_response.strip()
+    return resultado.tts_text.strip()
