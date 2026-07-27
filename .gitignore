@@ -1,0 +1,27 @@
+# Secretos
+.env
+!.env.example
+
+# Entorno virtual
+venv/
+.venv/
+
+# Cachés de Python y pruebas
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Modelos pesados descargados localmente
+models/
+
+# Archivos generados en ejecución
+logs/
+outputs/
+
+# Editor y sistema operativo
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
