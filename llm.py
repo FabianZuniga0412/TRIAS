@@ -15,9 +15,8 @@ from manejo_rutas import ModeloRemoto, configurar_logging, configurar_rutas_cuda
 configurar_rutas_cuda_windows()
 
 from llama_cpp import Llama
-from typing import Literal
-
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import ValidationError
+from tutor_contract import CorreccionEnglish, SYSTEM_PROMPT, learner_message
 
 configurar_logging()
 
@@ -28,50 +27,12 @@ logger = logging.getLogger(__name__)
 # Esquema de salida
 # ---------------------------------------------------------------------------
 
-class CorreccionEnglish(BaseModel):
-    assessment: Literal["needs_correction", "correct_but_unnatural", "correct_and_natural"]
-    corrected_text: str
-    natural_alternative: str = ""
-    explanation_es: str
-    focus: str
-    tts_text: str = Field(min_length=1, max_length=180)
-
-
 JSON_SCHEMA = CorreccionEnglish.model_json_schema()
 
 
 # ---------------------------------------------------------------------------
 # Prompt del sistema
 # ---------------------------------------------------------------------------
-
-SYSTEM_PROMPT = """You are TRIAS, a concise and helpful English tutor for Spanish-speaking learners.
-
-Analyze one English sentence. Teach both correctness and naturalness without changing the learner's intended meaning or inventing context. Give one main learning point only; never give generic praise such as "Great, that was correct".
-
-Choose assessment exactly as follows:
-- needs_correction: grammar, word choice, or meaning needs correction.
-- correct_but_unnatural: grammatical, but a native speaker would normally phrase it differently in a neutral everyday context.
-- correct_and_natural: grammatical and natural. Still provide one specific useful note about usage, register, or why it works.
-
-Return only a JSON object with:
-- assessment: one allowed value.
-- corrected_text: the best corrected sentence. Preserve the input exactly when it is already correct.
-- natural_alternative: a useful natural alternative, or an empty string when no alternative adds value.
-- explanation_es: one concise explanation in Spanish; quote English words when useful.
-- focus: a short English label, e.g. "Subject-verb agreement", "Natural phrasing", "Verb tense", "Correct and natural".
-- tts_text: an English sentence for pronunciation practice. Use natural_alternative when present; otherwise corrected_text. No praise, no questions, and at most 25 words.
-
-Examples:
-Input: "She don't like pizza"
-Output: {"assessment":"needs_correction","corrected_text":"She doesn't like pizza.","natural_alternative":"","explanation_es":"Con 'she' usamos 'doesn't', no 'don't'.","focus":"Subject-verb agreement","tts_text":"She doesn't like pizza."}
-
-Input: "I want to make a party"
-Output: {"assessment":"correct_but_unnatural","corrected_text":"I want to have a party.","natural_alternative":"I want to throw a party.","explanation_es":"Para organizar o celebrar una fiesta, 'have a party' es la opción neutral y natural; 'throw a party' es más informal.","focus":"Natural phrasing","tts_text":"I want to have a party."}
-
-Input: "I went to the store yesterday and bought some milk."
-Output: {"assessment":"correct_and_natural","corrected_text":"I went to the store yesterday and bought some milk.","natural_alternative":"","explanation_es":"La oración usa pasado simple de forma natural para una acción terminada ayer.","focus":"Correct and natural","tts_text":"I went to the store yesterday and bought some milk."}
-"""
-
 
 # ---------------------------------------------------------------------------
 # Carga del modelo (una sola vez, al importar el modulo)
@@ -111,7 +72,7 @@ def analizar_texto(texto_transcrito: str, max_reintentos: int = 2) -> Correccion
         respuesta = llm.create_chat_completion(
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": texto_transcrito},
+                {"role": "user", "content": learner_message(texto_transcrito)},
             ],
             temperature=0.3,
             max_tokens=350,
@@ -135,12 +96,11 @@ def analizar_texto(texto_transcrito: str, max_reintentos: int = 2) -> Correccion
     # en vez de tronar el pipeline completo.
     logger.error(f"No se pudo obtener JSON valido tras {max_reintentos} intentos. Ultimo error: {ultimo_error}")
     return CorreccionEnglish(
-        assessment="needs_correction",
-        corrected_text=texto_transcrito,
+        assessment="unable_to_analyze",
+        corrected_text="Please send a short English sentence.",
         natural_alternative="",
-        explanation_es="No se pudo analizar la frase en este momento.",
-        focus="Analysis unavailable",
-        tts_text=texto_transcrito or "Please try again.",
+        explanation_es="No pude analizar esa entrada de forma segura. Envía una frase corta para practicar inglés.",
+        focus="Sentence structure",
     )
 
 
@@ -150,4 +110,4 @@ def obtener_respuesta_tts(texto_transcrito: str) -> str:
     texto corto que TTS debe pronunciar.
     """
     resultado = analizar_texto(texto_transcrito)
-    return resultado.tts_text.strip()
+    return resultado.corrected_text.strip()

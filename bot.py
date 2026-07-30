@@ -232,7 +232,7 @@ class TelegramAudioBot:
         from tts import generar_wav
 
         analysis = analizar_texto(text)
-        return {"analysis": analysis.model_dump(), "output_wav": generar_wav(analysis.tts_text, output_wav, voice=TTS_VOICE, speed=TTS_SPEED, lang=TTS_LANG)}
+        return {"analysis": analysis.model_dump(), "output_wav": generar_wav(analysis.corrected_text, output_wav, voice=TTS_VOICE, speed=TTS_SPEED, lang=TTS_LANG)}
 
     async def _worker(self) -> None:
         while True:
@@ -284,7 +284,9 @@ class TelegramAudioBot:
         if kind == "audio":
             lines.extend([f"📝 Entendí: {received_text}", ""])
         assessment = analysis["assessment"]
-        if assessment == "correct_and_natural":
+        if assessment == "unable_to_analyze":
+            lines.append("⚠️ No pude analizar esa entrada de forma segura.")
+        elif assessment == "correct_and_natural":
             lines.append("✅ Tu frase es correcta y natural.")
         elif assessment == "correct_but_unnatural":
             lines.append("✅ Tu frase es correcta, pero hay una forma más natural de decirlo.")
