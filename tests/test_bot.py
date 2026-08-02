@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import bot
 from authorization import AuthorizationStore
+from learning_history import LearningHistoryStore
 
 
 class FakeMessage:
@@ -33,11 +34,11 @@ def update(user_id, message):
 def service(tmp_path):
     store = AuthorizationStore(tmp_path / "users.json", base_users=frozenset({1}))
     store.load()
-    return bot.TelegramAudioBot(SimpleNamespace(bot=FakeBot()), store)
+    return bot.TelegramAudioBot(SimpleNamespace(bot=FakeBot()), store, LearningHistoryStore(tmp_path / "history.json"))
 
 
 def analysis():
-    return {"assessment": "needs_correction", "corrected_text": "She doesn't like pizza.", "natural_alternative": "", "explanation_es": "Con 'she' usamos 'doesn't', no 'don't'.", "focus": "Subject-verb agreement", "tts_text": "She doesn't like pizza."}
+    return {"input_language": "en", "assessment": "needs_correction", "corrected_text": "She doesn't like pizza.", "natural_alternative": "", "explanation_es": "Con 'she' usamos 'doesn't', no 'don't'.", "focus": "Subject-verb agreement"}
 
 
 def test_unauthorized_audio_is_rejected(tmp_path):
@@ -73,8 +74,10 @@ def test_text_job_sends_feedback_before_voice_and_cleans_files(monkeypatch, tmp_
 
     async def fake_run(function, *args, **kwargs):
         if function.__name__ == "_run_analysis":
+            return analysis()
+        if function.__name__ == "_run_tts":
             wav.write_bytes(b"wav")
-            return {"analysis": analysis(), "output_wav": str(wav)}
+            return str(wav)
         if function.__name__ == "convert_wav_to_ogg":
             ogg.write_bytes(b"ogg")
             return ogg
@@ -101,10 +104,12 @@ def test_audio_job_includes_transcription_feedback_and_voice(monkeypatch, tmp_pa
         if function.__name__ == "convert_to_wav":
             return Path(args[0])
         if function.__name__ == "transcribir_audio":
-            return "She don't like pizza"
+            return SimpleNamespace(text="She don't like pizza", language="en", language_probability=0.95)
         if function.__name__ == "_run_analysis":
+            return analysis()
+        if function.__name__ == "_run_tts":
             wav.write_bytes(b"wav")
-            return {"analysis": analysis(), "output_wav": str(wav)}
+            return str(wav)
         if function.__name__ == "convert_wav_to_ogg":
             ogg.write_bytes(b"ogg")
             return ogg
@@ -119,7 +124,101 @@ def test_audio_job_includes_transcription_feedback_and_voice(monkeypatch, tmp_pa
 
 
 def test_feedback_formats_natural_sentence_without_generic_praise():
-    result = {"assessment": "correct_and_natural", "corrected_text": "I went home.", "natural_alternative": "", "explanation_es": "Usa pasado simple para una acción terminada.", "focus": "Correct and natural", "tts_text": "I went home."}
+    result = {"input_language": "en", "assessment": "correct_and_natural", "corrected_text": "I went home.", "natural_alternative": "", "explanation_es": "Usa pasado simple para una acción terminada.", "focus": "Correct and natural"}
     text = bot.TelegramAudioBot._format_feedback("I went home.", result, "text")
     assert "✅ Tu frase es correcta y natural." in text
     assert "Great" not in text
+
+
+def test_text_in_other_language_does_not_reach_tts(monkeypatch, tmp_path):
+    app = service(tmp_path)
+
+    async def fake_run(function, *args, **kwargs):
+        if function.__name__ == "_run_analysis":
+            return analysis() | {"input_language": "other", "assessment": "unable_to_analyze"}
+        raise AssertionError(f"No debe ejecutarse {function.__name__}")
+
+    monkeypatch.setattr(bot, "run_blocking", fake_run)
+    asyncio.run(app._process_job(bot.LearningJob(777, 1, "text", text="Hola, ¿cómo estás?")))
+    assert app.application.bot.messages == [(777, bot.NON_ENGLISH)]
+    assert app.application.bot.voices == []
+
+
+def test_audio_with_non_english_stops_before_analysis(monkeypatch, tmp_path):
+    app = service(tmp_path)
+    input_path = tmp_path / "input.ogg"
+    monkeypatch.setattr(bot, "new_input_path", lambda filename: input_path)
+
+    async def download(_, __, destination):
+        destination.write_bytes(b"input")
+        return destination
+
+    async def fake_run(function, *args, **kwargs):
+        if function.__name__ == "convert_to_wav":
+            return Path(args[0])
+        if function.__name__ == "transcribir_audio":
+            return SimpleNamespace(text="Hola", language="es", language_probability=0.98)
+        raise AssertionError(f"No debe ejecutarse {function.__name__}")
+
+    monkeypatch.setattr(bot, "download_telegram_file", download)
+    monkeypatch.setattr(bot, "run_blocking", fake_run)
+    asyncio.run(app._process_job(bot.LearningJob(777, 1, "audio", file_id="f", filename="voice.ogg")))
+    assert app.application.bot.messages == [(777, bot.NON_ENGLISH)]
+    assert app.application.bot.voices == []
+    assert not input_path.exists()
+
+
+def test_audio_with_low_confidence_asks_to_repeat(monkeypatch, tmp_path):
+    app = service(tmp_path)
+    input_path = tmp_path / "input.ogg"
+    monkeypatch.setattr(bot, "new_input_path", lambda filename: input_path)
+
+    async def download(_, __, destination):
+        destination.write_bytes(b"input")
+        return destination
+
+    async def fake_run(function, *args, **kwargs):
+        if function.__name__ == "convert_to_wav":
+            return Path(args[0])
+        if function.__name__ == "transcribir_audio":
+            return SimpleNamespace(text="maybe", language="en", language_probability=0.20)
+        raise AssertionError(f"No debe ejecutarse {function.__name__}")
+
+    monkeypatch.setattr(bot, "download_telegram_file", download)
+    monkeypatch.setattr(bot, "run_blocking", fake_run)
+    asyncio.run(app._process_job(bot.LearningJob(777, 1, "audio", file_id="f", filename="voice.ogg")))
+    assert app.application.bot.messages == [(777, bot.EMPTY_TRANSCRIPTION)]
+    assert app.application.bot.voices == []
+
+
+def test_practice_delivers_last_focus_phrase_and_voice(monkeypatch, tmp_path):
+    app = service(tmp_path)
+    app.history_store.record(1, "Subject-verb agreement")
+    wav, ogg = tmp_path / "practice.wav", tmp_path / "practice.ogg"
+    monkeypatch.setattr(bot, "new_output_path", lambda suffix: wav)
+
+    async def fake_run(function, *args, **kwargs):
+        if function.__name__ == "_run_tts":
+            assert args[0] == "She works every day."
+            wav.write_bytes(b"wav")
+            return str(wav)
+        if function.__name__ == "convert_wav_to_ogg":
+            ogg.write_bytes(b"ogg")
+            return ogg
+        raise AssertionError(function.__name__)
+
+    monkeypatch.setattr(bot, "run_blocking", fake_run)
+    asyncio.run(app._process_job(bot.LearningJob(777, 1, "practice", text="She works every day.", practice_note="Con he, she e it, el verbo suele llevar -s en presente.")))
+    assert "🎯 Práctica: She works every day." in app.application.bot.messages[0][1]
+    assert app.application.bot.voices == [(777, b"ogg")]
+    assert not wav.exists() and not ogg.exists()
+
+
+def test_progress_reports_last_focus_and_top_topics(tmp_path):
+    app = service(tmp_path)
+    app.history_store.record(1, "Articles")
+    app.history_store.record(1, "Verb tense")
+    app.history_store.record(1, "Articles")
+    message = FakeMessage()
+    asyncio.run(app.handle_progress(update(1, message), None))
+    assert message.replies == ["Último tema: Articles\nTemas a practicar:\n- Articles: 2\n- Verb tense: 1"]

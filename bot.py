@@ -31,15 +31,19 @@ from config import (
     INVITE_CODE,
     MAX_AUDIO_SECONDS,
     MAX_QUEUE_SIZE,
+    MIN_LANGUAGE_CONFIDENCE,
+    LEARNING_HISTORY_PATH,
     TELEGRAM_BOT_TOKEN,
     TTS_LANG,
     TTS_SPEED,
     TTS_VOICE,
 )
+from learning_history import LearningHistoryStore
 
 logger = logging.getLogger(__name__)
 
 NO_ACCESS = "No tienes acceso a este bot."
+NON_ENGLISH = "Parece que esta entrada no está en inglés. TRIAS practica inglés: envía una frase o audio en inglés."
 INVALID_INVITATION = "La invitación no es válida. Pide a tu profesor o administrador el enlace correcto."
 AUDIO_TOO_LONG = "Audio demasiado largo; intenta con uno más corto."
 TEXT_TOO_LONG = "Tu texto es demasiado largo. Envía una frase o párrafo corto de hasta 600 caracteres."
@@ -52,19 +56,21 @@ MAX_TEXT_CHARS = 600
 class LearningJob:
     chat_id: int
     user_id: int
-    kind: Literal["audio", "text"]
+    kind: Literal["audio", "text", "practice"]
     text: str | None = None
     file_id: str | None = None
     filename: str | None = None
     duration_seconds: int = 0
+    practice_note: str | None = None
 
 
 class TelegramAudioBot:
     """Mantiene autorización y una única cola para inferencias locales."""
 
-    def __init__(self, application: Application, authorization_store: AuthorizationStore) -> None:
+    def __init__(self, application: Application, authorization_store: AuthorizationStore, history_store: LearningHistoryStore) -> None:
         self.application = application
         self.authorization_store = authorization_store
+        self.history_store = history_store
         self.queue: asyncio.Queue[LearningJob] = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
         self.pending_user_ids: set[int] = set()
         self.pending_lock = asyncio.Lock()
@@ -72,6 +78,7 @@ class TelegramAudioBot:
 
     async def start(self) -> None:
         self.authorization_store.load()
+        self.history_store.load()
         self.worker_task = asyncio.create_task(self._worker(), name="telegram-learning-worker")
         logger.info("Worker de aprendizaje iniciado; capacidad máxima: %s", MAX_QUEUE_SIZE)
 
@@ -123,10 +130,29 @@ class TelegramAudioBot:
             if update.effective_message:
                 await update.effective_message.reply_text(NO_ACCESS)
             return
-        message = "Envía una frase escrita o un audio de hasta 60 segundos. Solo proceso una práctica tuya a la vez."
+        message = "Envía una frase escrita o un audio de hasta 60 segundos. Usa /practice para practicar y /progress para ver tu avance."
         if self.authorization_store.is_admin(user_id):
             message += "\n\nAdmin: /allow <user_id>, /revoke <user_id>, /users"
         await update.effective_message.reply_text(message)
+
+    async def handle_practice(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = self._user_id(update)
+        if user_id is None or not self.authorization_store.is_authorized(user_id):
+            await update.effective_message.reply_text(NO_ACCESS)
+            return
+        phrase, note, focus = self.history_store.practice_for(user_id)
+        await self._enqueue(update.effective_message, LearningJob(update.effective_chat.id, user_id, "practice", text=phrase, practice_note=note if focus else "Práctica general para comenzar."))
+
+    async def handle_progress(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user_id = self._user_id(update)
+        if user_id is None or not self.authorization_store.is_authorized(user_id):
+            await update.effective_message.reply_text(NO_ACCESS)
+            return
+        last, top = self.history_store.summary_for(user_id)
+        if not top:
+            await update.effective_message.reply_text("Aún no tengo errores registrados. Envía una frase para empezar.")
+            return
+        await update.effective_message.reply_text("Último tema: " + str(last) + "\nTemas a practicar:\n" + "\n".join(f"- {focus}: {count}" for focus, count in top))
 
     async def handle_allow(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         target_id = await self._admin_target_id(update, context)
@@ -197,7 +223,7 @@ class TelegramAudioBot:
             position = len(self.pending_user_ids) + 1
             self.pending_user_ids.add(job.user_id)
             self.queue.put_nowait(job)
-        received = "Texto recibido." if job.kind == "text" else "Audio recibido."
+        received = "Práctica preparada." if job.kind == "practice" else ("Texto recibido." if job.kind == "text" else "Audio recibido.")
         await message.reply_text(f"{received} Estás en espera; posición en cola: {position}." if position > 1 else f"{received} Estoy procesándolo.")
 
     async def _admin_target_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
@@ -227,12 +253,16 @@ class TelegramAudioBot:
         return ACCESS_MODE == "invite_code" and bool(INVITE_CODE) and hmac.compare_digest(invite_code, INVITE_CODE)
 
     @staticmethod
-    def _run_analysis(text: str, output_wav: str) -> dict:
+    def _run_analysis(text: str) -> dict:
         from llm import analizar_texto
+
+        return analizar_texto(text).model_dump()
+
+    @staticmethod
+    def _run_tts(text: str, output_wav: str) -> str:
         from tts import generar_wav
 
-        analysis = analizar_texto(text)
-        return {"analysis": analysis.model_dump(), "output_wav": generar_wav(analysis.corrected_text, output_wav, voice=TTS_VOICE, speed=TTS_SPEED, lang=TTS_LANG)}
+        return generar_wav(text, output_wav, voice=TTS_VOICE, speed=TTS_SPEED, lang=TTS_LANG)
 
     async def _worker(self) -> None:
         while True:
@@ -247,21 +277,41 @@ class TelegramAudioBot:
         completed = False
         try:
             text = job.text
+            if job.kind == "practice":
+                generated_wav = new_output_path(".wav")
+                generated_wav = Path(await run_blocking(self._run_tts, text, str(generated_wav)))
+                await self.application.bot.send_message(job.chat_id, f"🎯 Práctica: {text}\n💡 {job.practice_note}")
+                ogg_path = await run_blocking(convert_wav_to_ogg, generated_wav)
+                with ogg_path.open("rb") as audio_file:
+                    await self.application.bot.send_voice(chat_id=job.chat_id, voice=audio_file)
+                completed = True
+                return
             if job.kind == "audio":
                 from transcriptor import transcribir_audio
 
                 input_path = new_input_path(job.filename)
                 await download_telegram_file(self.application.bot, job.file_id, input_path)
                 wav_path = await run_blocking(convert_to_wav, input_path)
-                text = await run_blocking(transcribir_audio, str(wav_path))
-                if not text:
+                transcription = await run_blocking(transcribir_audio, str(wav_path))
+                if not transcription.text or transcription.language_probability < MIN_LANGUAGE_CONFIDENCE:
                     await self.application.bot.send_message(job.chat_id, EMPTY_TRANSCRIPTION)
                     completed = True
                     return
+                if transcription.language != "en":
+                    await self.application.bot.send_message(job.chat_id, NON_ENGLISH)
+                    completed = True
+                    return
+                text = transcription.text
+            analysis = await run_blocking(self._run_analysis, text)
+            if analysis["input_language"] != "en":
+                await self.application.bot.send_message(job.chat_id, NON_ENGLISH)
+                completed = True
+                return
+            if analysis["assessment"] in {"needs_correction", "correct_but_unnatural"}:
+                self.history_store.record(job.user_id, analysis["focus"])
+            await self.application.bot.send_message(job.chat_id, self._format_feedback(text, analysis, job.kind))
             generated_wav = new_output_path(".wav")
-            result = await run_blocking(self._run_analysis, text, str(generated_wav))
-            generated_wav = Path(result["output_wav"])
-            await self.application.bot.send_message(job.chat_id, self._format_feedback(text, result["analysis"], job.kind))
+            generated_wav = Path(await run_blocking(self._run_tts, analysis["corrected_text"], str(generated_wav)))
             ogg_path = await run_blocking(convert_wav_to_ogg, generated_wav)
             with ogg_path.open("rb") as audio_file:
                 await self.application.bot.send_voice(chat_id=job.chat_id, voice=audio_file)
@@ -312,7 +362,7 @@ def build_application(token: str = TELEGRAM_BOT_TOKEN) -> Application:
         await holder["service"].stop()
 
     application = ApplicationBuilder().token(token).post_init(post_init).post_shutdown(post_shutdown).build()
-    service = TelegramAudioBot(application, store)
+    service = TelegramAudioBot(application, store, LearningHistoryStore(LEARNING_HISTORY_PATH))
     holder["service"] = service
     application.add_handler(CommandHandler("start", service.handle_start))
     application.add_handler(CommandHandler("access", service.handle_access))
@@ -320,6 +370,8 @@ def build_application(token: str = TELEGRAM_BOT_TOKEN) -> Application:
     application.add_handler(CommandHandler("allow", service.handle_allow))
     application.add_handler(CommandHandler("revoke", service.handle_revoke))
     application.add_handler(CommandHandler("users", service.handle_users))
+    application.add_handler(CommandHandler("practice", service.handle_practice))
+    application.add_handler(CommandHandler("progress", service.handle_progress))
     application.add_handler(MessageHandler((filters.VOICE | filters.AUDIO) & ~filters.COMMAND, service.handle_audio))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, service.handle_text))
     return application

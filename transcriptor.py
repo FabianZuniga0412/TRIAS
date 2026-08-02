@@ -1,9 +1,10 @@
 import argparse
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 from faster_whisper import WhisperModel
-from config import WHISPER_MODEL, WHISPER_DEVICE, WHISPER_COMPUTE_TYPE
+from config import MIN_LANGUAGE_CONFIDENCE, WHISPER_MODEL, WHISPER_DEVICE, WHISPER_COMPUTE_TYPE
 from llm import analizar_texto
 from manejo_rutas import configurar_logging, gestor_rutas
 from tts import generar_wav
@@ -20,19 +21,25 @@ model = WhisperModel(
 )
 print("Modelo Whisper listo.")
 
-def transcribir_audio(wav_path: str) -> str:
+@dataclass(frozen=True)
+class TranscriptionResult:
+    text: str
+    language: str
+    language_probability: float
+
+
+def transcribir_audio(wav_path: str) -> TranscriptionResult:
     """
     Recibe la ruta de un WAV y regresa el texto transcrito.
     """
     segments, info = model.transcribe(
         wav_path,
-        language="en",  # Se fuerza ingles.
         beam_size=5,
         vad_filter=True,  # Filtra silencios.
     )
 
     texto = " ".join(segment.text.strip() for segment in segments)
-    return texto.strip()
+    return TranscriptionResult(texto.strip(), info.language, float(info.language_probability))
 
 
 def procesar_audio_a_respuesta(
@@ -46,7 +53,7 @@ def procesar_audio_a_respuesta(
     Pipeline completo:
     1. Transcribe el audio WAV.
     2. Lo manda a llm.py para obtener la correccion.
-    3. Convierte `natural_response` a un nuevo WAV con tts.py.
+    3. Convierte la frase corregida a un nuevo WAV con tts.py.
     """
     input_path = Path(wav_path)
     if not input_path.exists():
@@ -56,13 +63,18 @@ def procesar_audio_a_respuesta(
         output_wav_path = str(gestor_rutas.ruta_audio_salida(f"{input_path.stem}_respuesta.wav"))
 
     logger.info("Procesando audio de entrada: %s", input_path)
-    transcripcion = transcribir_audio(str(input_path))
-    if not transcripcion:
+    resultado_transcripcion = transcribir_audio(str(input_path))
+    transcripcion = resultado_transcripcion.text
+    if not transcripcion or resultado_transcripcion.language_probability < MIN_LANGUAGE_CONFIDENCE:
         raise RuntimeError("La transcripcion quedo vacia.")
+    if resultado_transcripcion.language != "en":
+        raise ValueError("TRIAS solo procesa audios detectados en ingles.")
 
     analisis = analizar_texto(transcripcion)
+    if analisis.input_language != "en":
+        raise ValueError("No se pudo confirmar que la entrada esta en ingles.")
     output_wav = generar_wav(
-        analisis.natural_response,
+        analisis.corrected_text,
         output_wav_path,
         voice=voice,
         speed=speed,
@@ -103,5 +115,5 @@ if __name__ == "__main__":
         lang=args.lang,
     )
     print(f"Transcripcion: {resultado['transcription']}")
-    print(f"Respuesta TTS: {resultado['analysis']['natural_response']}")
+    print(f"Respuesta TTS: {resultado['analysis']['corrected_text']}")
     print(f"WAV generado: {resultado['output_wav']}")

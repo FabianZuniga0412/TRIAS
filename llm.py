@@ -96,6 +96,7 @@ def analizar_texto(texto_transcrito: str, max_reintentos: int = 2) -> Correccion
     # en vez de tronar el pipeline completo.
     logger.error(f"No se pudo obtener JSON valido tras {max_reintentos} intentos. Ultimo error: {ultimo_error}")
     return CorreccionEnglish(
+        input_language="uncertain",
         assessment="unable_to_analyze",
         corrected_text="Please send a short English sentence.",
         natural_alternative="",

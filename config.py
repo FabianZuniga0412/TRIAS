@@ -20,7 +20,7 @@ LLAMA_MODEL_PATH = str(
 LLAMA_MODEL_URL = os.getenv("LLAMA_MODEL_URL", "").strip() or None
 LLAMA_GPU_LAYERS = int(os.getenv("LLAMA_GPU_LAYERS", "-1"))
 LLAMA_CTX = int(os.getenv("LLAMA_CTX", "4096"))
-TTS_ONNX_PROVIDER = os.getenv("TTS_ONNX_PROVIDER", "CUDAExecutionProvider")
+TTS_ONNX_PROVIDER = os.getenv("TTS_ONNX_PROVIDER", "CPUExecutionProvider")
 
 
 def _int_env(name: str, default: int) -> int:
@@ -62,8 +62,10 @@ MAX_QUEUE_SIZE = _int_env("MAX_QUEUE_SIZE", 10)
 TTS_VOICE = os.getenv("TTS_VOICE", "af_sarah").strip() or "af_sarah"
 TTS_SPEED = float(os.getenv("TTS_SPEED", "1.0"))
 TTS_LANG = os.getenv("TTS_LANG", "en-us").strip() or "en-us"
+MIN_LANGUAGE_CONFIDENCE = float(os.getenv("MIN_LANGUAGE_CONFIDENCE", "0.70"))
 
 AUTHORIZATION_STORE_PATH = BASE_DIR / "data" / "authorized_users.json"
+LEARNING_HISTORY_PATH = BASE_DIR / "data" / "learning_history.json"
 
 
 def validate_bot_config() -> None:
@@ -80,3 +82,5 @@ def validate_bot_config() -> None:
         raise RuntimeError("MAX_QUEUE_SIZE debe ser mayor que cero.")
     if TTS_SPEED <= 0:
         raise RuntimeError("TTS_SPEED debe ser mayor que cero.")
+    if not 0 <= MIN_LANGUAGE_CONFIDENCE <= 1:
+        raise RuntimeError("MIN_LANGUAGE_CONFIDENCE debe estar entre 0 y 1.")
