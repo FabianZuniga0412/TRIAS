@@ -39,6 +39,7 @@ from config import (
     TTS_VOICE,
 )
 from learning_history import LearningHistoryStore
+from language_detection import detect_text_language
 
 logger = logging.getLogger(__name__)
 
@@ -302,6 +303,10 @@ class TelegramAudioBot:
                     completed = True
                     return
                 text = transcription.text
+            elif detect_text_language(text).classification == "other":
+                await self.application.bot.send_message(job.chat_id, NON_ENGLISH)
+                completed = True
+                return
             analysis = await run_blocking(self._run_analysis, text)
             if analysis["input_language"] != "en":
                 await self.application.bot.send_message(job.chat_id, NON_ENGLISH)

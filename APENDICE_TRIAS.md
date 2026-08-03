@@ -270,6 +270,7 @@ El proyecto define las dependencias necesarias para reproducir el entorno de eje
 | onnxruntime | 1.24.4 | Ejecución del modelo ONNX de Kokoro. |
 | python-telegram-bot | 21.10 | Comunicación con la API de Telegram. |
 | pydantic | 2 o superior | Validación del contrato JSON de Llama. |
+| lingua-language-detector | 2.2.0 | Detección local previa de idioma en mensajes de texto. |
 | ffmpeg-python | 0.2.0 | Integración de conversión de audio con FFmpeg. |
 | python-dotenv | 1.1.0 | Carga de configuración local desde `.env`. |
 | pytest | 8 o superior | Pruebas automatizadas del sistema. |
@@ -290,6 +291,7 @@ Las variables se almacenan en `.env`. El archivo real no debe compartirse, subir
 | `MAX_AUDIO_SECONDS` | Duración máxima permitida para un audio. |
 | `MAX_QUEUE_SIZE` | Número máximo de trabajos en espera. |
 | `MIN_LANGUAGE_CONFIDENCE` | Confianza mínima de Whisper para aceptar el audio. |
+| `MIN_TEXT_LANGUAGE_CONFIDENCE` | Confianza mínima para bloquear texto detectado como otro idioma. |
 | `WHISPER_MODEL` | Tamaño del modelo Whisper utilizado. |
 | `WHISPER_DEVICE` | Dispositivo para Whisper, configurado en CPU. |
 | `WHISPER_COMPUTE_TYPE` | Tipo de cálculo de Whisper, configurado como int8. |

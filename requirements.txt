@@ -16,6 +16,7 @@ soundfile==0.13.1
 sounddevice==0.5.5
 ffmpeg-python==0.2.0
 pydantic>=2,<3
+lingua-language-detector==2.2.0
 
 # Comunicación con Telegram
 python-telegram-bot==21.10

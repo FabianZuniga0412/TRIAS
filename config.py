@@ -63,6 +63,7 @@ TTS_VOICE = os.getenv("TTS_VOICE", "af_sarah").strip() or "af_sarah"
 TTS_SPEED = float(os.getenv("TTS_SPEED", "1.0"))
 TTS_LANG = os.getenv("TTS_LANG", "en-us").strip() or "en-us"
 MIN_LANGUAGE_CONFIDENCE = float(os.getenv("MIN_LANGUAGE_CONFIDENCE", "0.70"))
+MIN_TEXT_LANGUAGE_CONFIDENCE = float(os.getenv("MIN_TEXT_LANGUAGE_CONFIDENCE", "0.70"))
 
 AUTHORIZATION_STORE_PATH = BASE_DIR / "data" / "authorized_users.json"
 LEARNING_HISTORY_PATH = BASE_DIR / "data" / "learning_history.json"
@@ -84,3 +85,5 @@ def validate_bot_config() -> None:
         raise RuntimeError("TTS_SPEED debe ser mayor que cero.")
     if not 0 <= MIN_LANGUAGE_CONFIDENCE <= 1:
         raise RuntimeError("MIN_LANGUAGE_CONFIDENCE debe estar entre 0 y 1.")
+    if not 0 <= MIN_TEXT_LANGUAGE_CONFIDENCE <= 1:
+        raise RuntimeError("MIN_TEXT_LANGUAGE_CONFIDENCE debe estar entre 0 y 1.")
