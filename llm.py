@@ -16,7 +16,7 @@ configurar_rutas_cuda_windows()
 
 from llama_cpp import Llama
 from pydantic import ValidationError
-from tutor_contract import CorreccionEnglish, SYSTEM_PROMPT, learner_message
+from tutor_contract import CorreccionEnglish, SYSTEM_PROMPT, align_analysis_with_assessment, learner_message
 
 configurar_logging()
 
@@ -86,7 +86,7 @@ def analizar_texto(texto_transcrito: str, max_reintentos: int = 2) -> Correccion
 
         try:
             data = json.loads(contenido)
-            return CorreccionEnglish(**data)
+            return align_analysis_with_assessment(CorreccionEnglish(**data), texto_transcrito)
         except (json.JSONDecodeError, ValidationError) as e:
             ultimo_error = e
             logger.warning(f"Intento {intento}/{max_reintentos} fallo al parsear JSON: {e}")

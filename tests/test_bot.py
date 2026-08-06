@@ -67,6 +67,14 @@ def test_text_length_and_access_are_validated(tmp_path):
     assert message.replies == [bot.TEXT_TOO_LONG]
 
 
+def test_text_with_more_than_three_sentences_is_rejected(tmp_path):
+    app = service(tmp_path)
+    message = FakeMessage(text="First sentence. Second sentence. Third sentence. Fourth sentence.")
+    asyncio.run(app.handle_text(update(1, message), None))
+    assert message.replies == [bot.TOO_MANY_SENTENCES]
+    assert app.queue.empty()
+
+
 def test_text_job_sends_feedback_before_voice_and_cleans_files(monkeypatch, tmp_path):
     app = service(tmp_path)
     wav, ogg = tmp_path / "reply.wav", tmp_path / "reply.ogg"
@@ -130,6 +138,26 @@ def test_feedback_formats_natural_sentence_without_generic_praise():
     assert "Great" not in text
 
 
+def test_tts_uses_only_the_visible_natural_alternative_when_available():
+    result = analysis() | {
+        "assessment": "correct_but_unnatural",
+        "corrected_text": "I have 20 years.",
+        "natural_alternative": "I am 20 years old.",
+        "focus": "Natural phrasing",
+    }
+    assert bot.TelegramAudioBot._tts_practice_text(result) == "I am 20 years old."
+
+
+def test_tts_preserves_correct_and_natural_text():
+    result = analysis() | {
+        "assessment": "correct_and_natural",
+        "corrected_text": "How long did you even cry for me?",
+        "natural_alternative": "",
+        "focus": "Correct and natural",
+    }
+    assert bot.TelegramAudioBot._tts_practice_text(result) == "How long did you even cry for me?"
+
+
 def test_text_in_other_language_does_not_reach_tts(monkeypatch, tmp_path):
     app = service(tmp_path)
 
@@ -157,7 +185,7 @@ def test_audio_with_non_english_stops_before_analysis(monkeypatch, tmp_path):
         if function.__name__ == "convert_to_wav":
             return Path(args[0])
         if function.__name__ == "transcribir_audio":
-            return SimpleNamespace(text="Hola", language="es", language_probability=0.98)
+            return SimpleNamespace(text="Hola hermano", language="es", language_probability=0.98)
         raise AssertionError(f"No debe ejecutarse {function.__name__}")
 
     monkeypatch.setattr(bot, "download_telegram_file", download)
@@ -166,6 +194,38 @@ def test_audio_with_non_english_stops_before_analysis(monkeypatch, tmp_path):
     assert app.application.bot.messages == [(777, bot.NON_ENGLISH)]
     assert app.application.bot.voices == []
     assert not input_path.exists()
+
+
+def test_audio_with_wrong_whisper_language_but_english_transcript_continues(monkeypatch, tmp_path):
+    app = service(tmp_path)
+    input_path, wav, ogg = tmp_path / "input.ogg", tmp_path / "reply.wav", tmp_path / "reply.ogg"
+    monkeypatch.setattr(bot, "new_input_path", lambda filename: input_path)
+    monkeypatch.setattr(bot, "new_output_path", lambda suffix: wav)
+
+    async def download(_, __, destination):
+        destination.write_bytes(b"input")
+        return destination
+
+    async def fake_run(function, *args, **kwargs):
+        if function.__name__ == "convert_to_wav":
+            return Path(args[0])
+        if function.__name__ == "transcribir_audio":
+            return SimpleNamespace(text="She dont like pizza.", language="es", language_probability=0.98)
+        if function.__name__ == "_run_analysis":
+            return analysis()
+        if function.__name__ == "_run_tts":
+            wav.write_bytes(b"wav")
+            return str(wav)
+        if function.__name__ == "convert_wav_to_ogg":
+            ogg.write_bytes(b"ogg")
+            return ogg
+        raise AssertionError(function.__name__)
+
+    monkeypatch.setattr(bot, "download_telegram_file", download)
+    monkeypatch.setattr(bot, "run_blocking", fake_run)
+    asyncio.run(app._process_job(bot.LearningJob(777, 1, "audio", file_id="f", filename="voice.ogg")))
+    assert "She doesn't like pizza." in app.application.bot.messages[0][1]
+    assert app.application.bot.voices == [(777, b"ogg")]
 
 
 def test_audio_with_low_confidence_asks_to_repeat(monkeypatch, tmp_path):
@@ -181,7 +241,7 @@ def test_audio_with_low_confidence_asks_to_repeat(monkeypatch, tmp_path):
         if function.__name__ == "convert_to_wav":
             return Path(args[0])
         if function.__name__ == "transcribir_audio":
-            return SimpleNamespace(text="maybe", language="en", language_probability=0.20)
+            return SimpleNamespace(text="Hola hermano", language="es", language_probability=0.20)
         raise AssertionError(f"No debe ejecutarse {function.__name__}")
 
     monkeypatch.setattr(bot, "download_telegram_file", download)
@@ -189,6 +249,38 @@ def test_audio_with_low_confidence_asks_to_repeat(monkeypatch, tmp_path):
     asyncio.run(app._process_job(bot.LearningJob(777, 1, "audio", file_id="f", filename="voice.ogg")))
     assert app.application.bot.messages == [(777, bot.EMPTY_TRANSCRIPTION)]
     assert app.application.bot.voices == []
+
+
+def test_audio_with_low_whisper_confidence_and_english_transcript_continues(monkeypatch, tmp_path):
+    app = service(tmp_path)
+    input_path, wav, ogg = tmp_path / "input.ogg", tmp_path / "reply.wav", tmp_path / "reply.ogg"
+    monkeypatch.setattr(bot, "new_input_path", lambda filename: input_path)
+    monkeypatch.setattr(bot, "new_output_path", lambda suffix: wav)
+
+    async def download(_, __, destination):
+        destination.write_bytes(b"input")
+        return destination
+
+    async def fake_run(function, *args, **kwargs):
+        if function.__name__ == "convert_to_wav":
+            return Path(args[0])
+        if function.__name__ == "transcribir_audio":
+            return SimpleNamespace(text="She dont like pizza.", language="en", language_probability=0.46)
+        if function.__name__ == "_run_analysis":
+            return analysis()
+        if function.__name__ == "_run_tts":
+            wav.write_bytes(b"wav")
+            return str(wav)
+        if function.__name__ == "convert_wav_to_ogg":
+            ogg.write_bytes(b"ogg")
+            return ogg
+        raise AssertionError(function.__name__)
+
+    monkeypatch.setattr(bot, "download_telegram_file", download)
+    monkeypatch.setattr(bot, "run_blocking", fake_run)
+    asyncio.run(app._process_job(bot.LearningJob(777, 1, "audio", file_id="f", filename="voice.ogg")))
+    assert "She doesn't like pizza." in app.application.bot.messages[0][1]
+    assert app.application.bot.voices == [(777, b"ogg")]
 
 
 def test_practice_delivers_last_focus_phrase_and_voice(monkeypatch, tmp_path):

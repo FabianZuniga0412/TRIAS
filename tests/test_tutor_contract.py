@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from tutor_contract import CorreccionEnglish, SECURITY_PROBES, SYSTEM_PROMPT, learner_message
+from tutor_contract import CorreccionEnglish, SECURITY_PROBES, SYSTEM_PROMPT, align_analysis_with_assessment, learner_message
 
 
 def safe_analysis():
@@ -48,7 +48,44 @@ def test_contract_rejects_assistant_role_or_technical_solution_in_practice_sente
 
 def test_contract_limits_response_lengths():
     with pytest.raises(ValidationError):
-        CorreccionEnglish(**(safe_analysis() | {"corrected_text": "a" * 281}))
+        CorreccionEnglish(**(safe_analysis() | {"corrected_text": "a" * 351}))
+
+
+def test_contract_allows_up_to_three_corrected_sentences():
+    result = CorreccionEnglish(**(safe_analysis() | {
+        "corrected_text": "Hi, it is nice to meet you. Could you tell me the fastest way to get to the city center? Thank you.",
+    }))
+    assert result.corrected_text.startswith("Hi, it is nice")
+
+
+def test_contract_rejects_more_than_three_corrected_sentences():
+    with pytest.raises(ValidationError):
+        CorreccionEnglish(**(safe_analysis() | {
+            "corrected_text": "First sentence. Second sentence. Third sentence. Fourth sentence.",
+        }))
+
+
+def test_correct_and_natural_preserves_the_learner_text_for_tts():
+    learner_text = "How long did you even cry for me?"
+    result = CorreccionEnglish(**(safe_analysis() | {
+        "assessment": "correct_and_natural",
+        "corrected_text": "How long did you cry for me?",
+        "natural_alternative": "",
+        "focus": "Correct and natural",
+    }))
+
+    aligned = align_analysis_with_assessment(result, learner_text)
+
+    assert aligned.corrected_text == learner_text
+
+
+def test_unnatural_assessment_requires_a_visible_alternative():
+    with pytest.raises(ValidationError):
+        CorreccionEnglish(**(safe_analysis() | {
+            "assessment": "correct_but_unnatural",
+            "natural_alternative": "",
+            "focus": "Natural phrasing",
+        }))
 
 
 @pytest.mark.parametrize("language", ["other", "uncertain"])

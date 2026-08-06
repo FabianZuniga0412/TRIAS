@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import hmac
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -47,10 +48,13 @@ NO_ACCESS = "No tienes acceso a este bot."
 NON_ENGLISH = "Parece que esta entrada no está en inglés. TRIAS practica inglés: envía una frase o audio en inglés."
 INVALID_INVITATION = "La invitación no es válida. Pide a tu profesor o administrador el enlace correcto."
 AUDIO_TOO_LONG = "Audio demasiado largo; intenta con uno más corto."
-TEXT_TOO_LONG = "Tu texto es demasiado largo. Envía una frase o párrafo corto de hasta 600 caracteres."
+TEXT_TOO_LONG = "Tu texto es demasiado largo. Envía hasta tres oraciones y 350 caracteres."
+TOO_MANY_SENTENCES = "Para darte una corrección clara, envía un máximo de tres oraciones por mensaje."
 ALREADY_PENDING = "Ya tengo una práctica tuya procesándose; espera la respuesta antes de enviar otra."
 EMPTY_TRANSCRIPTION = "No pude entender el audio. ¿Puedes repetirlo?"
-MAX_TEXT_CHARS = 600
+MAX_TEXT_CHARS = 350
+MAX_LEARNER_SENTENCES = 3
+SENTENCE_ENDING_PATTERN = re.compile(r"[.!?]+(?=\s|$)")
 
 
 @dataclass(frozen=True)
@@ -131,7 +135,7 @@ class TelegramAudioBot:
             if update.effective_message:
                 await update.effective_message.reply_text(NO_ACCESS)
             return
-        message = "Envía una frase escrita o un audio de hasta 60 segundos. Usa /practice para practicar y /progress para ver tu avance."
+        message = "Envía hasta tres oraciones escritas o un audio de hasta 30 segundos. Usa /practice para practicar y /progress para ver tu avance."
         if self.authorization_store.is_admin(user_id):
             message += "\n\nAdmin: /allow <user_id>, /revoke <user_id>, /users"
         await update.effective_message.reply_text(message)
@@ -210,6 +214,9 @@ class TelegramAudioBot:
             return
         if len(text) > MAX_TEXT_CHARS:
             await message.reply_text(TEXT_TOO_LONG)
+            return
+        if self._has_too_many_sentences(text):
+            await message.reply_text(TOO_MANY_SENTENCES)
             return
         await self._enqueue(message, LearningJob(update.effective_chat.id, user_id, "text", text=text))
 
@@ -294,15 +301,38 @@ class TelegramAudioBot:
                 await download_telegram_file(self.application.bot, job.file_id, input_path)
                 wav_path = await run_blocking(convert_to_wav, input_path)
                 transcription = await run_blocking(transcribir_audio, str(wav_path))
-                if not transcription.text or transcription.language_probability < MIN_LANGUAGE_CONFIDENCE:
+                if not transcription.text:
                     await self.application.bot.send_message(job.chat_id, EMPTY_TRANSCRIPTION)
                     completed = True
                     return
+                text = transcription.text
+                text_language = detect_text_language(text)
+                if transcription.language_probability < MIN_LANGUAGE_CONFIDENCE:
+                    if text_language.classification != "en":
+                        await self.application.bot.send_message(job.chat_id, EMPTY_TRANSCRIPTION)
+                        completed = True
+                        return
+                    logger.warning(
+                        "Whisper detectó inglés con confianza %.2f, pero la transcripción fue confirmada como inglés de forma local; se continúa sin guardar la transcripción.",
+                        transcription.language_probability,
+                    )
                 if transcription.language != "en":
-                    await self.application.bot.send_message(job.chat_id, NON_ENGLISH)
+                    if text_language.classification != "en":
+                        await self.application.bot.send_message(job.chat_id, NON_ENGLISH)
+                        completed = True
+                        return
+                    logger.warning(
+                        "Whisper detectó %s, pero la segunda comprobación confirmó inglés; se continúa sin guardar la transcripción.",
+                        transcription.language,
+                    )
+                if len(text) > MAX_TEXT_CHARS:
+                    await self.application.bot.send_message(job.chat_id, TEXT_TOO_LONG)
                     completed = True
                     return
-                text = transcription.text
+                if self._has_too_many_sentences(text):
+                    await self.application.bot.send_message(job.chat_id, TOO_MANY_SENTENCES)
+                    completed = True
+                    return
             elif detect_text_language(text).classification == "other":
                 await self.application.bot.send_message(job.chat_id, NON_ENGLISH)
                 completed = True
@@ -316,7 +346,7 @@ class TelegramAudioBot:
                 self.history_store.record(job.user_id, analysis["focus"])
             await self.application.bot.send_message(job.chat_id, self._format_feedback(text, analysis, job.kind))
             generated_wav = new_output_path(".wav")
-            generated_wav = Path(await run_blocking(self._run_tts, analysis["corrected_text"], str(generated_wav)))
+            generated_wav = Path(await run_blocking(self._run_tts, self._tts_practice_text(analysis), str(generated_wav)))
             ogg_path = await run_blocking(convert_wav_to_ogg, generated_wav)
             with ogg_path.open("rb") as audio_file:
                 await self.application.bot.send_voice(chat_id=job.chat_id, voice=audio_file)
@@ -352,6 +382,17 @@ class TelegramAudioBot:
             lines.extend(["", f"🗣️ Más natural: {analysis['natural_alternative']}"])
         lines.append(f"Tema: {analysis['focus']}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _tts_practice_text(analysis: dict) -> str:
+        """El audio practica la alternativa solo cuando ésta fue propuesta."""
+        if analysis["assessment"] == "correct_but_unnatural" and analysis.get("natural_alternative"):
+            return analysis["natural_alternative"]
+        return analysis["corrected_text"]
+
+    @staticmethod
+    def _has_too_many_sentences(text: str) -> bool:
+        return len(SENTENCE_ENDING_PATTERN.findall(text.strip())) > MAX_LEARNER_SENTENCES
 
 
 def build_application(token: str = TELEGRAM_BOT_TOKEN) -> Application:

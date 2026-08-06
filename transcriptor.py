@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from faster_whisper import WhisperModel
-from config import MIN_LANGUAGE_CONFIDENCE, WHISPER_MODEL, WHISPER_DEVICE, WHISPER_COMPUTE_TYPE
+from config import MIN_LANGUAGE_CONFIDENCE, WHISPER_MODEL, WHISPER_DEVICE, WHISPER_COMPUTE_TYPE, WHISPER_BEAM_SIZE
 from llm import analizar_texto
 from manejo_rutas import configurar_logging, gestor_rutas
 from tts import generar_wav
@@ -34,8 +34,15 @@ def transcribir_audio(wav_path: str) -> TranscriptionResult:
     """
     segments, info = model.transcribe(
         wav_path,
-        beam_size=5,
+        # Una búsqueda pequeña reduce la tendencia del modelo a reemplazar
+        # errores de estudiantes por una versión gramaticalmente probable.
+        beam_size=WHISPER_BEAM_SIZE,
         vad_filter=True,  # Filtra silencios.
+        condition_on_previous_text=False,
+        initial_prompt=(
+            "Verbatim transcription of an English learner. Preserve the words actually spoken, "
+            "including grammar mistakes. Do not correct grammar, replace verbs, or paraphrase."
+        ),
     )
 
     texto = " ".join(segment.text.strip() for segment in segments)

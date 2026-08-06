@@ -81,7 +81,7 @@ Ideas que todos deben poder responder:
 
 ### Guion sugerido
 
-> “La arquitectura empieza cuando Telegram entrega texto o audio al bot. Antes de procesar algo, validamos que el usuario tenga acceso y que respete los límites: texto corto y audio de hasta 60 segundos.”
+> “La arquitectura empieza cuando Telegram entrega texto o audio al bot. Antes de procesar algo, validamos que el usuario tenga acceso y que respete los límites: hasta tres oraciones y audio de hasta 30 segundos.”
 
 > “Todos los trabajos pasan por una cola única. Esto es importante porque usamos modelos locales: si varias personas intentaran usar Llama al mismo tiempo, podrían competir por la memoria y hacer inestable el servicio. La cola procesa un trabajo a la vez.”
 

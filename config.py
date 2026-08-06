@@ -53,11 +53,12 @@ def parse_user_ids(value: str | None) -> frozenset[int]:
 
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+WHISPER_BEAM_SIZE = _int_env("WHISPER_BEAM_SIZE", 1)
 AUTHORIZED_USER_IDS = parse_user_ids(os.getenv("AUTHORIZED_USER_IDS"))
 ADMIN_USER_IDS = parse_user_ids(os.getenv("ADMIN_USER_IDS"))
 ACCESS_MODE = os.getenv("ACCESS_MODE", "invite_code").strip().lower()
 INVITE_CODE = os.getenv("INVITE_CODE", "").strip()
-MAX_AUDIO_SECONDS = _int_env("MAX_AUDIO_SECONDS", 60)
+MAX_AUDIO_SECONDS = _int_env("MAX_AUDIO_SECONDS", 30)
 MAX_QUEUE_SIZE = _int_env("MAX_QUEUE_SIZE", 10)
 TTS_VOICE = os.getenv("TTS_VOICE", "af_sarah").strip() or "af_sarah"
 TTS_SPEED = float(os.getenv("TTS_SPEED", "1.0"))
@@ -79,6 +80,8 @@ def validate_bot_config() -> None:
         raise RuntimeError("Falta INVITE_CODE para el modo invite_code.")
     if MAX_AUDIO_SECONDS <= 0:
         raise RuntimeError("MAX_AUDIO_SECONDS debe ser mayor que cero.")
+    if WHISPER_BEAM_SIZE <= 0:
+        raise RuntimeError("WHISPER_BEAM_SIZE debe ser mayor que cero.")
     if MAX_QUEUE_SIZE <= 0:
         raise RuntimeError("MAX_QUEUE_SIZE debe ser mayor que cero.")
     if TTS_SPEED <= 0:

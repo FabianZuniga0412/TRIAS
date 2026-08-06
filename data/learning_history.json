@@ -1,12 +1,23 @@
 {
   "users": {
     "8809785070": {
-      "last_focus": "Sentence structure",
+      "last_focus": "Verb tense",
       "focus_counts": {
-        "Subject-verb agreement": 1,
-        "Verb tense": 1,
+        "Subject-verb agreement": 3,
+        "Verb tense": 4,
+        "Sentence structure": 5
+      },
+      "practice_indexes": {
         "Sentence structure": 1
       }
+    },
+    "8805895299": {
+      "last_focus": "Verb tense",
+      "focus_counts": {
+        "Verb tense": 3,
+        "Word choice": 1
+      },
+      "practice_indexes": {}
     }
   }
 }

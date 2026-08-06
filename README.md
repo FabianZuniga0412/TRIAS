@@ -24,7 +24,9 @@ El proyecto se ejecuta desde `C:\Users\FabiisLK\Desktop\dev\SI\TRIAS`; esa es la
 3. Comprueba que los modelos estén en `models/` y que la ruta de `LLAMA_MODEL_PATH` sea correcta.
 4. Usa el entorno virtual local `venv`. Llama usa la RTX con `LLAMA_GPU_LAYERS=-1`; Whisper y Kokoro se configuran en CPU con `WHISPER_DEVICE=cpu`, `WHISPER_COMPUTE_TYPE=int8` y `TTS_ONNX_PROVIDER=CPUExecutionProvider`.
 
-La detección de idioma de Whisper se controla con `MIN_LANGUAGE_CONFIDENCE=0.70`. Si el audio tiene una confianza menor, TRIAS pide repetirlo para evitar inventar una corrección. Para texto, `MIN_TEXT_LANGUAGE_CONFIDENCE=0.70` bloquea localmente entradas que se identifican con alta confianza como otro idioma antes de llamar a Llama.
+Whisper se configura con `WHISPER_BEAM_SIZE=1`, sin contexto entre segmentos y con una instrucción de transcripción literal. Esto reduce su tendencia a normalizar errores del estudiante, aunque ningún sistema de voz puede garantizar conservar cada error acústico.
+
+La detección de idioma de Whisper se controla con `MIN_LANGUAGE_CONFIDENCE=0.70`. Si el audio tiene una confianza menor, TRIAS solo continúa cuando una segunda detección local confirma que la transcripción es inglés. Si no puede confirmarlo, pide repetir para evitar inventar una corrección. Para texto, `MIN_TEXT_LANGUAGE_CONFIDENCE=0.70` bloquea localmente entradas que se identifican con alta confianza como otro idioma antes de llamar a Llama.
 
 ## Arrancar y detener
 
@@ -40,8 +42,8 @@ El script valida que estás en la copia local, usa `venv\Scripts\python.exe` y e
 ## Comandos del bot
 
 - `/start <codigo>` o `/access <codigo>`: autoriza al usuario con el código de invitación.
-- `/help`: muestra ayuda.
-- `/practice`: propone y pronuncia una frase del último tema que necesitó práctica; si no hay historial, propone una frase general.
+- `/help`: muestra ayuda y recuerda el límite de tres oraciones o 30 segundos de audio.
+  - `/practice`: propone y pronuncia una frase del último tema que necesitó práctica; cada uso rota entre varios ejemplos y, si no hay historial, usa práctica general.
 - `/progress`: muestra el último tema y los tres temas que más han necesitado corrección.
 - Administración: `/allow <user_id>`, `/revoke <user_id>`, `/users` (solo IDs administradores).
 

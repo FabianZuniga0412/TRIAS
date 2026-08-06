@@ -62,12 +62,19 @@ def detect_text_language(text: str) -> TextLanguageResult:
         return TextLanguageResult("uncertain", None, 0.0)
 
     detected, confidence = _best_language(_spanish_english_detector, cleaned_text)
-    if detected is Language.SPANISH and confidence >= MIN_TEXT_LANGUAGE_CONFIDENCE:
+    # ``lingua`` puede devolver instancias equivalentes que no son el mismo
+    # objeto de Python, por eso se compara por valor y no por identidad.
+    if detected == Language.SPANISH and confidence >= MIN_TEXT_LANGUAGE_CONFIDENCE:
         return TextLanguageResult("other", "es", confidence)
+    # Para inglés con errores de estudiante la confianza puede ser baja. Si
+    # inglés es la mejor hipótesis frente a español, se deja pasar al contrato
+    # del tutor, que aplica una segunda validación de idioma más contextual.
+    if detected == Language.ENGLISH:
+        return TextLanguageResult("en", "en", confidence)
 
     detected, confidence = _best_language(_common_language_detector, cleaned_text)
-    if detected is not None and detected is not Language.ENGLISH and confidence >= MIN_TEXT_LANGUAGE_CONFIDENCE:
+    if detected is not None and detected != Language.ENGLISH and confidence >= MIN_TEXT_LANGUAGE_CONFIDENCE:
         return TextLanguageResult("other", detected.iso_code_639_1.name.lower(), confidence)
-    if detected is Language.ENGLISH and confidence >= MIN_TEXT_LANGUAGE_CONFIDENCE:
+    if detected == Language.ENGLISH and confidence >= MIN_TEXT_LANGUAGE_CONFIDENCE:
         return TextLanguageResult("en", "en", confidence)
     return TextLanguageResult("uncertain", detected.iso_code_639_1.name.lower() if detected else None, confidence)

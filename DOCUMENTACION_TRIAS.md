@@ -252,7 +252,7 @@ Aunque la IA corre localmente, Telegram sigue siendo el medio de transporte de l
 ### 8.4. Límites operativos
 
 - Texto: máximo 600 caracteres.
-- Audio: máximo 60 segundos por defecto.
+- Audio: máximo 30 segundos por defecto y hasta tres oraciones por práctica.
 - Cola global: 10 trabajos por defecto.
 - Un trabajo pendiente por usuario.
 - Archivos temporales eliminados al terminar, incluso cuando ocurre un error.

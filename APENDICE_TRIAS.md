@@ -147,7 +147,7 @@ class CorreccionEnglish(BaseModel):
 
     input_language: Literal["en", "other", "uncertain"]
     assessment: Assessment
-    corrected_text: str = Field(min_length=1, max_length=280)
+    corrected_text: str = Field(min_length=1, max_length=350)
     natural_alternative: str = Field(default="", max_length=280)
     explanation_es: str = Field(min_length=1, max_length=360)
     focus: Focus
